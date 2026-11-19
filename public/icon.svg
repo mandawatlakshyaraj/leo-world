@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="42%" r="65%">
+      <stop offset="0%" stop-color="#14294a" />
+      <stop offset="55%" stop-color="#091529" />
+      <stop offset="100%" stop-color="#040a14" />
+    </radialGradient>
+    <linearGradient id="goldArc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fae29c" />
+      <stop offset="100%" stop-color="#d4a238" />
+    </linearGradient>
+    <linearGradient id="cyanArc" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7ef4ff" />
+      <stop offset="100%" stop-color="#1ebcd1" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGlow)" />
+  <circle cx="256" cy="256" r="176" fill="none" stroke="url(#goldArc)" stroke-width="18" opacity="0.92" />
+  <circle cx="256" cy="256" r="134" fill="none" stroke="url(#cyanArc)" stroke-width="10" stroke-dasharray="28 16" opacity="0.88" />
+  <path
+    d="M256 116 L284 228 L396 256 L284 284 L256 396 L228 284 L116 256 L228 228 Z"
+    fill="url(#goldArc)"
+  />
+  <circle cx="256" cy="256" r="34" fill="#040a14" stroke="#42e8f5" stroke-width="10" />
+</svg>

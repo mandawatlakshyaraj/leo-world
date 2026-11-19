@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display-magic: 'Cinzel', Georgia, serif;
+    --font-body-magic: 'Lora', Georgia, serif;
+    --font-ui-private: 'Outfit', system-ui, -apple-system, sans-serif;
+    --font-mono-tech: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background-color: #10091c;
+    color: #fff4d7;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #f4d27a;
+    outline-offset: 2px;
+  }
+}
+
+.font-magic-display {
+  font-family: var(--font-display-magic);
+}
+
+.font-magic-body {
+  font-family: var(--font-body-magic);
+}
+
+.font-private-ui {
+  font-family: var(--font-ui-private);
+}
+
+.font-tech-mono {
+  font-family: var(--font-mono-tech);
+  font-variant-numeric: tabular-nums;
+}
+
+.public-world-bg {
+  background:
+    radial-gradient(ellipse 80% 45% at 50% 0%, rgba(108, 63, 158, 0.42) 0%, transparent 65%),
+    linear-gradient(155deg, #10091c 0%, #1d0e32 55%, #090612 100%);
+}
+
+.private-world-bg {
+  background:
+    radial-gradient(ellipse 60% 40% at 15% -5%, rgba(16, 86, 118, 0.34) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 35% at 90% 15%, rgba(54, 30, 96, 0.25) 0%, transparent 50%),
+    linear-gradient(145deg, #040812 0%, #07111e 55%, #03060d 100%);
+}
+
+.private-grid-overlay {
+  background-image:
+    linear-gradient(rgba(56, 217, 245, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 217, 245, 0.045) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 85%);
+}
+
+@keyframes reactorRotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes reactorPulse {
+  0%,
+  100% {
+    opacity: 0.78;
+    filter: drop-shadow(0 0 8px rgba(44, 236, 255, 0.65));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 22px rgba(166, 255, 255, 0.9));
+  }
+}
+
+@keyframes bootProgress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.reactor-spin {
+  transform-origin: 200px 200px;
+  animation: reactorRotate 22s linear infinite;
+}
+
+.reactor-reverse {
+  transform-origin: 200px 200px;
+  animation: reactorRotate 14s linear infinite reverse;
+}
+
+.reactor-pulse {
+  transform-origin: 200px 200px;
+  animation: reactorPulse 2.4s ease-in-out infinite;
+}
+
+.boot-bar-fill {
+  transform-origin: left center;
+  animation: bootProgress 2.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

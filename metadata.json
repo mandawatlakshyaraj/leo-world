@@ -1,0 +1,6 @@
+{
+  "name": "Leo World",
+  "description": "A dual-world experience: wizarding puzzle challenges on the surface and a private command center, social circle, and encrypted vault hidden behind a secret portal.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
