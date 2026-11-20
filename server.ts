@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 import { WebSocketServer, WebSocket } from 'ws';
-import { LeoStore } from './src/server/store.js';
+import { LeoStore } from './src/server/store.ts';
 import type {
   ConnectTabId,
   E2eeDmEnvelope,
@@ -14,7 +14,7 @@ import type {
   GlimpseTabId,
   PrivateModuleId,
   RealtimeEventPayload,
-} from './src/types/leo.js';
+} from './src/types/leo.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === 'production';
@@ -143,24 +143,28 @@ function buildLocalAiReply(
 }
 
 async function startServer() {
+  await store.init();
+
   const app = express();
   app.use(express.json({ limit: '10mb' }));
 
   // Auth
-  app.post('/api/auth/register', (req, res) => {
+  app.post('/api/auth/register', async (req, res) => {
     try {
       const { id, password } = req.body as { id?: string; password?: string };
       const result = store.register(id || '', password || '');
+      await store.flush();
       res.status(201).json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }
   });
 
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     try {
       const { id, password } = req.body as { id?: string; password?: string };
       const result = store.login(id || '', password || '');
+      await store.flush();
       res.json(result);
     } catch (err) {
       res.status(401).json({ error: (err as Error).message });
@@ -176,15 +180,17 @@ async function startServer() {
     res.json({ user });
   });
 
-  app.post('/api/auth/logout', (req, res) => {
+  app.post('/api/auth/logout', async (req, res) => {
     store.logout(extractBearerToken(req));
+    await store.flush();
     res.json({ ok: true });
   });
 
   // Profile
-  app.patch('/api/profile', requireAuth, (req: AuthedRequest, res) => {
+  app.patch('/api/profile', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const user = store.updateProfile(req.leoUserId!, req.body || {}, getOnlineUserIds());
+      await store.flush();
       const targets = [user.id, ...store.getFriendIds(user.id)];
       const { e2eeKeyBackup: _omitted, ...publicBroadcastUser } = user;
       broadcastToUsers(targets, { type: 'profile:updated', user: publicBroadcastUser });
@@ -194,7 +200,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/e2ee/public-key', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/e2ee/public-key', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { publicKey, keyBackup } = req.body as {
         publicKey?: string;
@@ -202,6 +208,7 @@ async function startServer() {
       };
       const onlineIds = getOnlineUserIds();
       const user = store.setE2eePublicKey(req.leoUserId!, publicKey || '', keyBackup, onlineIds);
+      await store.flush();
       const targets = new Set<string>([user.id, ...onlineIds, ...store.getFriendIds(user.id)]);
       broadcastToUsers(targets, {
         type: 'e2ee:key-updated',
@@ -228,13 +235,16 @@ async function startServer() {
   });
 
   // Stories
-  app.get('/api/stories', requireAuth, (req: AuthedRequest, res) => {
-    res.json({ stories: store.getStories(req.leoUserId!) });
+  app.get('/api/stories', requireAuth, async (req: AuthedRequest, res) => {
+    const stories = store.getStories(req.leoUserId!);
+    await store.flush();
+    res.json({ stories });
   });
 
-  app.post('/api/stories', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/stories', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const story = store.createStory(req.leoUserId!, req.body || {});
+      await store.flush();
       const targets =
         story.visibility === 'private'
           ? [story.authorId]
@@ -246,20 +256,22 @@ async function startServer() {
     }
   });
 
-  app.post('/api/stories/:id/view', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/stories/:id/view', requireAuth, async (req: AuthedRequest, res) => {
     const story = store.markStoryViewed(req.leoUserId!, String(req.params.id));
     if (!story) {
       res.status(404).json({ error: 'Story not found.' });
       return;
     }
+    await store.flush();
     broadcastToUsers([story.authorId, req.leoUserId!], { type: 'story:updated', story });
     res.json({ story });
   });
 
-  app.post('/api/stories/:id/react', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/stories/:id/react', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { emoji } = req.body as { emoji?: string };
       const story = store.reactToStory(req.leoUserId!, String(req.params.id), emoji || '');
+      await store.flush();
       const targets = [story.authorId, ...store.getFriendIds(story.authorId)];
       broadcastToUsers(targets, { type: 'story:updated', story });
       res.json({ story });
@@ -268,7 +280,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/stories/:id/reply', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/stories/:id/reply', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { text } = req.body as { text?: string };
       const { message, notification } = store.replyToStory(
@@ -276,6 +288,7 @@ async function startServer() {
         String(req.params.id),
         text || ''
       );
+      await store.flush();
       broadcastToUsers([message.fromId, message.toId], { type: 'dm:new', message });
       if (notification) {
         broadcastToUsers([notification.userId], { type: 'notification:new', notification });
@@ -286,13 +299,14 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/stories/:id', requireAuth, (req: AuthedRequest, res) => {
+  app.delete('/api/stories/:id', requireAuth, async (req: AuthedRequest, res) => {
     const storyId = String(req.params.id);
     const removed = store.deleteStory(req.leoUserId!, storyId);
     if (!removed) {
       res.status(404).json({ error: 'Story not found.' });
       return;
     }
+    await store.flush();
     broadcastToUsers([req.leoUserId!, ...store.getFriendIds(req.leoUserId!)], {
       type: 'story:deleted',
       storyId,
@@ -305,9 +319,10 @@ async function startServer() {
     res.json({ posts: store.getPosts(req.leoUserId!) });
   });
 
-  app.post('/api/posts', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/posts', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const post = store.createPost(req.leoUserId!, req.body || {});
+      await store.flush();
       const targets =
         post.visibility === 'private'
           ? [post.authorId]
@@ -319,9 +334,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/posts/:id/like', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/posts/:id/like', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { post, notification } = store.togglePostLike(req.leoUserId!, String(req.params.id));
+      await store.flush();
       const targets =
         post.visibility === 'private'
           ? [post.authorId]
@@ -336,16 +352,17 @@ async function startServer() {
     }
   });
 
-  app.post('/api/posts/:id/bookmark', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/posts/:id/bookmark', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const post = store.togglePostBookmark(req.leoUserId!, String(req.params.id));
+      await store.flush();
       res.json({ post });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }
   });
 
-  app.post('/api/posts/:id/comments', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/posts/:id/comments', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { text } = req.body as { text?: string };
       const { post, notification } = store.addPostComment(
@@ -353,6 +370,7 @@ async function startServer() {
         String(req.params.id),
         text || ''
       );
+      await store.flush();
       const targets =
         post.visibility === 'private'
           ? [post.authorId]
@@ -367,13 +385,14 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/posts/:id', requireAuth, (req: AuthedRequest, res) => {
+  app.delete('/api/posts/:id', requireAuth, async (req: AuthedRequest, res) => {
     const postId = String(req.params.id);
     const removed = store.deletePost(req.leoUserId!, postId);
     if (!removed) {
       res.status(404).json({ error: 'Post not found.' });
       return;
     }
+    await store.flush();
     broadcastToUsers([req.leoUserId!, ...store.getFriendIds(req.leoUserId!)], {
       type: 'post:deleted',
       postId,
@@ -386,10 +405,11 @@ async function startServer() {
     res.json(store.getConnectSnapshot(req.leoUserId!, getOnlineUserIds()));
   });
 
-  app.post('/api/friends/request', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/friends/request', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { targetId } = req.body as { targetId?: string };
       const { request, notification } = store.sendFriendRequest(req.leoUserId!, targetId || '');
+      await store.flush();
       broadcastToUsers([req.leoUserId!, request.toId], { type: 'friend:update' });
       if (notification) {
         broadcastToUsers([notification.userId], { type: 'notification:new', notification });
@@ -400,7 +420,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/friends/respond', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/friends/respond', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { targetId, action } = req.body as {
         targetId?: string;
@@ -411,6 +431,7 @@ async function startServer() {
         return;
       }
       const { notification } = store.respondFriendRequest(req.leoUserId!, targetId, action);
+      await store.flush();
       broadcastToUsers([req.leoUserId!, targetId], { type: 'friend:update' });
       if (notification) {
         broadcastToUsers([notification.userId], { type: 'notification:new', notification });
@@ -421,7 +442,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/messages', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/messages', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { toId, text, mediaDataUrl, mediaType, e2ee, isSnap, replyToId, sharedPostId } =
         req.body as {
@@ -443,6 +464,7 @@ async function startServer() {
         replyToId,
         sharedPostId,
       });
+      await store.flush();
       broadcastToUsers([message.fromId, message.toId], { type: 'dm:new', message });
       if (notification) {
         broadcastToUsers([notification.userId], { type: 'notification:new', notification });
@@ -453,7 +475,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/messages/read', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/messages/read', requireAuth, async (req: AuthedRequest, res) => {
     const { partnerId } = req.body as { partnerId?: string };
     if (!partnerId) {
       res.status(400).json({ error: 'Missing partnerId.' });
@@ -461,6 +483,7 @@ async function startServer() {
     }
     const result = store.markThreadRead(req.leoUserId!, partnerId);
     if (result.updated) {
+      await store.flush();
       broadcastToUsers([req.leoUserId!, result.partnerId], {
         type: 'dm:read',
         fromId: result.partnerId,
@@ -471,10 +494,11 @@ async function startServer() {
     res.json({ ok: true, readAt: result.readAt });
   });
 
-  app.post('/api/messages/:id/react', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/messages/:id/react', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { emoji } = req.body as { emoji?: string };
       const message = store.reactToDirectMessage(req.leoUserId!, String(req.params.id), emoji || '');
+      await store.flush();
       broadcastToUsers([message.fromId, message.toId], { type: 'dm:updated', message });
       res.json({ message });
     } catch (err) {
@@ -482,9 +506,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/messages/:id/open-snap', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/messages/:id/open-snap', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { revealed, burned } = store.openSnapMessage(req.leoUserId!, String(req.params.id));
+      await store.flush();
       broadcastToUsers([burned.fromId, burned.toId], { type: 'dm:updated', message: burned });
       res.json({ message: revealed });
     } catch (err) {
@@ -492,10 +517,11 @@ async function startServer() {
     }
   });
 
-  app.post('/api/groups', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/groups', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { name, description } = req.body as { name?: string; description?: string };
       const group = store.createGroup(req.leoUserId!, name || '', description || '');
+      await store.flush();
       broadcastToUsers(group.members, { type: 'group:updated', group });
       res.status(201).json({ group });
     } catch (err) {
@@ -503,10 +529,11 @@ async function startServer() {
     }
   });
 
-  app.post('/api/groups/:id/members', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/groups/:id/members', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { memberId } = req.body as { memberId?: string };
       const group = store.addGroupMember(req.leoUserId!, String(req.params.id), memberId || '');
+      await store.flush();
       broadcastToUsers(group.members, { type: 'group:updated', group });
       res.json({ group });
     } catch (err) {
@@ -514,7 +541,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/groups/:id/messages', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/groups/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { text, mediaDataUrl, mediaType, e2ee } = req.body as {
         text?: string;
@@ -528,6 +555,7 @@ async function startServer() {
         mediaType,
         e2ee,
       });
+      await store.flush();
       broadcastToUsers(group.members, { type: 'group:updated', group });
       for (const n of notifications) {
         broadcastToUsers([n.userId], { type: 'notification:new', notification: n });
@@ -538,7 +566,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/groups/:id/messages/:msgId/react', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/groups/:id/messages/:msgId/react', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { emoji } = req.body as { emoji?: string };
       const group = store.reactToGroupMessage(
@@ -547,6 +575,7 @@ async function startServer() {
         String(req.params.msgId),
         emoji || ''
       );
+      await store.flush();
       broadcastToUsers(group.members, { type: 'group:updated', group });
       res.json({ group });
     } catch (err) {
@@ -554,13 +583,14 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/groups/:id', requireAuth, (req: AuthedRequest, res) => {
+  app.delete('/api/groups/:id', requireAuth, async (req: AuthedRequest, res) => {
     const groupId = String(req.params.id);
     const { deleted, members } = store.deleteGroup(req.leoUserId!, groupId);
     if (!deleted) {
       res.status(404).json({ error: 'Group not found.' });
       return;
     }
+    await store.flush();
     broadcastToUsers(members, { type: 'group:deleted', groupId });
     res.json({ ok: true });
   });
@@ -570,8 +600,9 @@ async function startServer() {
     res.json({ notifications: store.getNotifications(req.leoUserId!) });
   });
 
-  app.post('/api/notifications/read', requireAuth, (req: AuthedRequest, res) => {
+  app.post('/api/notifications/read', requireAuth, async (req: AuthedRequest, res) => {
     store.markNotificationsRead(req.leoUserId!);
+    await store.flush();
     res.json({ ok: true });
   });
 
@@ -618,10 +649,17 @@ async function startServer() {
     }
   });
 
+  const server = http.createServer(app);
+
   if (!isProduction) {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: { server },
+        ...(hmrDisabled ? { hmr: false } : {}),
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -638,13 +676,15 @@ async function startServer() {
     });
   }
 
-  const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
     try {
       const url = new URL(request.url || '/', 'http://localhost');
       if (url.pathname !== '/ws') {
+        if (request.headers['sec-websocket-protocol']?.includes('vite-hmr')) {
+          return;
+        }
         socket.destroy();
         return;
       }
@@ -718,8 +758,23 @@ async function startServer() {
     });
   });
 
+  const shutdown = async () => {
+    await store.flush();
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', () => {
+    void shutdown();
+  });
+  process.on('SIGINT', () => {
+    void shutdown();
+  });
+
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Leo World server running on http://0.0.0.0:${PORT}`);
+    console.log(
+      `Leo World server running on http://0.0.0.0:${PORT} (storage: ${store.isSupabaseEnabled() ? 'Supabase leo_state' : 'local file'})`
+    );
   });
 }
 
