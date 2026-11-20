@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createClient } from '@supabase/supabase-js';
 import type {
   ConnectSnapshot,
   DirectMessageItem,
@@ -15,7 +16,7 @@ import type {
   PostCommentItem,
   StoryItem,
   UserProfileView,
-} from '../types/leo.js';
+} from '../types/leo.ts';
 
 interface StoredUser {
   id: string;
@@ -59,6 +60,37 @@ interface DatabaseSchema {
 const VALID_ID_REGEX = /^[a-zA-Z0-9._-]{3,24}$/;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_MEDIA_LENGTH = 9_000_000;
+const DEFAULT_SUPABASE_TABLE = 'leo_state';
+const DEFAULT_SUPABASE_ROW_ID = 'main';
+
+export interface SupabaseStateClient {
+  from(table: string): {
+    select(columns: string): {
+      eq(column: string, value: string): {
+        maybeSingle(): PromiseLike<{ data: { data?: unknown } | null; error: { message: string } | null }>;
+      };
+    };
+    upsert(
+      values: { id: string; data: DatabaseSchema },
+      options?: { onConflict?: string }
+    ): PromiseLike<{ error: { message: string } | null }>;
+  };
+}
+
+export interface LeoStoreOptions {
+  filePath?: string | null;
+  supabaseUrl?: string;
+  supabaseServiceRoleKey?: string;
+  supabaseTable?: string;
+  supabaseRowId?: string;
+  supabaseClient?: SupabaseStateClient | null;
+}
+
+function isConfiguredEnvValue(value: string | undefined, placeholder: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === placeholder) return undefined;
+  return trimmed;
+}
 
 const SEEDED_IMAGES = {
   rooftop: '/src/assets/images/social_rooftop_night_1795018521525.jpg',
@@ -297,25 +329,126 @@ function createInitialDb(): DatabaseSchema {
 export class LeoStore {
   private filePath: string | null;
   private db: DatabaseSchema;
+  private supabase: SupabaseStateClient | null = null;
+  private supabaseTable: string;
+  private supabaseRowId: string;
+  private supabaseDirty = false;
+  private supabaseFlushPromise: Promise<void> | null = null;
+  private initialized = false;
 
-  constructor(filePath: string | null = path.resolve(process.cwd(), '.data/leoworld-db.json')) {
-    this.filePath = filePath;
+  constructor(
+    filePathOrOptions: string | null | LeoStoreOptions = path.resolve(
+      process.cwd(),
+      '.data/leoworld-db.json'
+    )
+  ) {
+    const isExplicitNull = filePathOrOptions === null;
+    const opts: LeoStoreOptions =
+      typeof filePathOrOptions === 'string' || isExplicitNull
+        ? { filePath: filePathOrOptions }
+        : filePathOrOptions;
+
+    this.filePath =
+      opts.filePath === undefined
+        ? path.resolve(process.cwd(), '.data/leoworld-db.json')
+        : opts.filePath;
+    this.supabaseTable = opts.supabaseTable || DEFAULT_SUPABASE_TABLE;
+    this.supabaseRowId = opts.supabaseRowId || DEFAULT_SUPABASE_ROW_ID;
+
+    if (opts.supabaseClient !== undefined) {
+      this.supabase = opts.supabaseClient;
+    } else if (!isExplicitNull) {
+      const supabaseUrl = isConfiguredEnvValue(
+        opts.supabaseUrl ?? process.env.SUPABASE_URL,
+        'MY_SUPABASE_URL'
+      );
+      const serviceRoleKey = isConfiguredEnvValue(
+        opts.supabaseServiceRoleKey ?? process.env.SUPABASE_SERVICE_ROLE_KEY,
+        'MY_SUPABASE_SERVICE_ROLE_KEY'
+      );
+      if (supabaseUrl && serviceRoleKey) {
+        this.supabase = createClient(supabaseUrl, serviceRoleKey, {
+          auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+          },
+        }) as unknown as SupabaseStateClient;
+      }
+    }
+
     if (this.filePath && fs.existsSync(this.filePath)) {
       try {
         const raw = fs.readFileSync(this.filePath, 'utf8');
         this.db = JSON.parse(raw) as DatabaseSchema;
-        this.normalizeDb();
+        this.normalizeDb(false);
       } catch {
         this.db = createInitialDb();
-        this.save();
+        this.saveToLocalFile();
       }
     } else {
       this.db = createInitialDb();
-      this.save();
+      if (!this.supabase) {
+        this.saveToLocalFile();
+      }
     }
   }
 
-  private normalizeDb(): void {
+  isSupabaseEnabled(): boolean {
+    return this.supabase !== null;
+  }
+
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    if (!this.supabase) {
+      this.normalizeDb();
+      return;
+    }
+
+    try {
+      const { data, error } = await this.supabase
+        .from(this.supabaseTable)
+        .select('data')
+        .eq('id', this.supabaseRowId)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          `[LeoStore] Failed to load state from Supabase (${this.supabaseTable}:${this.supabaseRowId}): ${error.message}`
+        );
+        this.saveToLocalFile();
+        return;
+      }
+
+      if (data && data.data && typeof data.data === 'object') {
+        this.db = data.data as DatabaseSchema;
+        const normalizedChanged = this.normalizeDb(false);
+        this.saveToLocalFile();
+        if (normalizedChanged) {
+          await this.triggerSupabaseFlush();
+        }
+        console.log(
+          `[LeoStore] Loaded persistent state from Supabase (${this.supabaseTable}:${this.supabaseRowId}, users: ${this.db.users.length}, messages: ${this.db.messages.length}, stories: ${this.db.stories.length}).`
+        );
+      } else {
+        this.normalizeDb(false);
+        this.saveToLocalFile();
+        await this.triggerSupabaseFlush();
+        console.log(
+          `[LeoStore] Seeded initial state into Supabase (${this.supabaseTable}:${this.supabaseRowId}).`
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[LeoStore] Unexpected error connecting to Supabase (${this.supabaseTable}:${this.supabaseRowId}):`,
+        err instanceof Error ? err.message : err
+      );
+      this.saveToLocalFile();
+    }
+  }
+
+  private normalizeDb(persistIfChanged = true): boolean {
     const now = Date.now();
     let changed = false;
 
@@ -381,18 +514,89 @@ export class LeoStore {
       changed = true;
     }
 
-    if (changed) {
+    if (changed && persistIfChanged) {
       this.save();
+    }
+    return changed;
+  }
+
+  private saveToLocalFile(): void {
+    if (!this.filePath) return;
+    try {
+      const dir = path.dirname(this.filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(this.filePath, JSON.stringify(this.db, null, 2), 'utf8');
+    } catch {
+      try {
+        const fallbackPath = '/tmp/leoworld-db.json';
+        this.filePath = fallbackPath;
+        fs.writeFileSync(fallbackPath, JSON.stringify(this.db, null, 2), 'utf8');
+      } catch {
+        // Continue with in-memory state if filesystem is completely non-writable
+      }
+    }
+  }
+
+  private async writeSupabaseSnapshot(snapshot: DatabaseSchema): Promise<void> {
+    if (!this.supabase) return;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const { error } = await this.supabase
+          .from(this.supabaseTable)
+          .upsert({ id: this.supabaseRowId, data: snapshot }, { onConflict: 'id' });
+        if (!error) return;
+        if (attempt === 2) {
+          console.error(
+            `[LeoStore] Failed to persist state to Supabase (${this.supabaseTable}:${this.supabaseRowId}): ${error.message}`
+          );
+          return;
+        }
+      } catch (err) {
+        if (attempt === 2) {
+          console.error(
+            `[LeoStore] Supabase upsert error (${this.supabaseTable}:${this.supabaseRowId}):`,
+            err instanceof Error ? err.message : err
+          );
+          return;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  private triggerSupabaseFlush(): Promise<void> {
+    if (!this.supabase) return Promise.resolve();
+    this.supabaseDirty = true;
+    if (!this.supabaseFlushPromise) {
+      this.supabaseFlushPromise = (async () => {
+        try {
+          while (this.supabaseDirty) {
+            this.supabaseDirty = false;
+            const snapshot = JSON.parse(JSON.stringify(this.db)) as DatabaseSchema;
+            await this.writeSupabaseSnapshot(snapshot);
+          }
+        } finally {
+          this.supabaseFlushPromise = null;
+        }
+      })();
+    }
+    return this.supabaseFlushPromise;
+  }
+
+  async flush(): Promise<void> {
+    if (!this.supabase) return;
+    if (this.supabaseDirty || this.supabaseFlushPromise) {
+      await this.triggerSupabaseFlush();
     }
   }
 
   private save(): void {
-    if (!this.filePath) return;
-    const dir = path.dirname(this.filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    this.saveToLocalFile();
+    if (this.supabase) {
+      void this.triggerSupabaseFlush();
     }
-    fs.writeFileSync(this.filePath, JSON.stringify(this.db, null, 2), 'utf8');
   }
 
   private pruneExpiredStories(): void {

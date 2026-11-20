@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LeoStore } from './store';
+import { LeoStore, type SupabaseStateClient } from './store.ts';
 
 test('LeoStore registers, updates profile, creates feed posts with likes/comments/bookmarks', () => {
   const store = new LeoStore(null);
@@ -184,4 +184,91 @@ test('LeoStore stores E2EE public keys and opaque ciphertext envelopes with zero
   assert.equal(grpRes.group.messages[0].text, '');
   assert.equal(grpRes.group.messages[0].e2ee?.ciphertext, 'GROUP_CIPHERTEXT');
 });
+
+function createInMemorySupabaseMock(delayMs = 5): {
+  client: SupabaseStateClient;
+  rows: Map<string, unknown>;
+  upsertCount: () => number;
+} {
+  const rows = new Map<string, unknown>();
+  let upserts = 0;
+
+  const client: SupabaseStateClient = {
+    from(table: string) {
+      assert.equal(table, 'leo_state');
+      return {
+        select(columns: string) {
+          assert.equal(columns, 'data');
+          return {
+            eq(column: string, value: string) {
+              assert.equal(column, 'id');
+              return {
+                async maybeSingle() {
+                  await new Promise((r) => setTimeout(r, delayMs));
+                  if (!rows.has(value)) {
+                    return { data: null, error: null };
+                  }
+                  return { data: { data: JSON.parse(JSON.stringify(rows.get(value))) }, error: null };
+                },
+              };
+            },
+          };
+        },
+        async upsert(values, options) {
+          assert.equal(values.id, 'main');
+          assert.equal(options?.onConflict, 'id');
+          await new Promise((r) => setTimeout(r, delayMs));
+          upserts += 1;
+          rows.set(values.id, JSON.parse(JSON.stringify(values.data)));
+          return { error: null };
+        },
+      };
+    },
+  };
+
+  return { client, rows, upsertCount: () => upserts };
+}
+
+test('LeoStore persists accounts, chats, and stories in Supabase leo_state across restarts', async () => {
+  const mock = createInMemorySupabaseMock(5);
+
+  const store1 = new LeoStore({ filePath: null, supabaseClient: mock.client });
+  assert.equal(store1.isSupabaseEnabled(), true);
+  await store1.init();
+  assert.ok(mock.rows.has('main'));
+
+  // Register account, send chat message, create story, and flush rapidly
+  const reg = store1.register('persisted_leo', 'supersecret99');
+  store1.sendDirectMessage('persisted_leo', 'astra_07', { text: 'Survives restart!' });
+  const story = store1.createStory('persisted_leo', { text: 'Permanent story', visibility: 'friends' });
+  await store1.flush();
+
+  // Simulate full server restart with fresh LeoStore instance pointing to same Supabase leo_state row
+  const store2 = new LeoStore({ filePath: null, supabaseClient: mock.client });
+  await store2.init();
+
+  const restoredUser = store2.getUserByToken(reg.token);
+  assert.equal(restoredUser?.id, 'persisted_leo');
+
+  const loginAfterRestart = store2.login('persisted_leo', 'supersecret99');
+  assert.equal(loginAfterRestart.user.id, 'persisted_leo');
+
+  const snap = store2.getConnectSnapshot('persisted_leo');
+  assert.ok(snap.messages.some((m) => m.text === 'Survives restart!'));
+
+  const stories = store2.getStories('persisted_leo');
+  assert.ok(stories.some((s) => s.id === story.id && s.text === 'Permanent story'));
+});
+
+test('LeoStore ignores placeholder Supabase env values and falls back cleanly', async () => {
+  const store = new LeoStore({
+    filePath: null,
+    supabaseUrl: 'MY_SUPABASE_URL',
+    supabaseServiceRoleKey: 'MY_SUPABASE_SERVICE_ROLE_KEY',
+  });
+  assert.equal(store.isSupabaseEnabled(), false);
+  await store.init();
+  await store.flush();
+});
+
 

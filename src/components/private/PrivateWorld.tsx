@@ -496,6 +496,7 @@ export function PrivateWorld({
                 <button
                   type="button"
                   onClick={handleLogout}
+                  aria-label="Sign out"
                   className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-[#244e5e] bg-[#081927] px-3.5 py-2 text-xs font-semibold whitespace-nowrap text-[#c7f3fc] transition hover:border-[#42e8f5] hover:text-white"
                 >
                   <LogOut className="h-3.5 w-3.5" />

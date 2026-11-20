@@ -1129,6 +1129,7 @@ export function ConnectModule({
                   disabled={!activePartner}
                   onClick={() => setDmIsSnap((v) => !v)}
                   aria-pressed={dmIsSnap}
+                  aria-label="Toggle View-Once Vanishing Snap"
                   title="Toggle View-Once Vanishing Snap"
                   className={`inline-flex h-11 shrink-0 items-center gap-1 rounded-xl border px-3 text-xs font-semibold transition ${
                     dmIsSnap
@@ -1166,6 +1167,7 @@ export function ConnectModule({
                 />
                 <button
                   type="submit"
+                  aria-label={dmIsSnap ? 'Send Snap' : 'Send message'}
                   disabled={!activePartner || busy || (!dmInput.trim() && !dmMediaDataUrl)}
                   className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-[#42e8f5] bg-[#0a3c4c] px-4 py-2.5 text-sm font-semibold text-[#e8fbff] transition hover:bg-[#0e4d61] disabled:opacity-50"
                 >
@@ -1465,6 +1467,7 @@ export function ConnectModule({
                   />
                   <button
                     type="submit"
+                    aria-label="Send group message"
                     disabled={busy || (!groupMsgInput.trim() && !groupMediaDataUrl)}
                     className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-[#42e8f5] bg-[#0a3c4c] px-4 py-2.5 text-sm font-semibold text-[#e8fbff] hover:bg-[#0e4d61] disabled:opacity-50"
                   >
