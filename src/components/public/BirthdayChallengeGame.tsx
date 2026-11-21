@@ -52,59 +52,71 @@ export function BirthdayChallengeGame({
     setFeedback('');
   }
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (finished) return;
+  async function handleSubmit(e: FormEvent) {
+  e.preventDefault();
+  if (finished) return;
 
-    const result = checkBirthdaySubmission(answer, current.date);
-    if (result === 'secret') {
+  // Pehle server se secret check karo
+  try {
+    const res = await fetch('/api/check-secret', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: answer }),
+    });
+    const data = await res.json();
+    if (data.unlock) {
       playTone(880, 180, 'sine', 0.05);
       onSecretCodeEntered();
       return;
     }
-    if (result === 'empty') {
-      setFeedback('Enter a month and day first (e.g. July 31).');
-      return;
-    }
-
-    const nextScore = result === 'correct' ? score + 1 : score;
-    if (result === 'correct') {
-      setScore(nextScore);
-      setFeedback(`Correct — ${current.name} was born on ${current.date}.`);
-      playTone(659.25, 160, 'triangle', 0.05);
-    } else {
-      setFeedback(`Not quite. ${current.name}’s birthday is ${current.date}.`);
-      playErrorTone();
-    }
-
-    timerRef.current = window.setTimeout(() => {
-      const next = index + 1;
-      setIndex(next);
-      setAnswer('');
-      setImageError(false);
-      setFeedback('');
-      if (next >= chapterCharacters.length) {
-        playVictoryChime();
-        const stars = nextScore >= 5 ? 3 : nextScore >= 3 ? 2 : 1;
-        const nextProg = recordLevelCompletion('birthday', chapter, stars, 2);
-        const points = calculateChallengeScore({
-          gameId: 'birthday',
-          level: chapter,
-          stars,
-          correctCount: nextScore,
-        });
-        recordLeaderboardScore({
-          gameId: 'birthday',
-          level: chapter,
-          score: points,
-          stars,
-          detail: `${nextScore}/${chapterCharacters.length} dates`,
-        });
-        setProgress(nextProg);
-        onProgressUpdated?.();
-      }
-    }, 900);
+  } catch (err) {
+    // Network error pe ignore, normal check continue
   }
+
+  const result = checkBirthdaySubmission(answer, current.date);
+  if (result === 'empty') {
+    setFeedback('Enter a month and day first (e.g. July 31).');
+    return;
+  }
+
+  const nextScore = result === 'correct' ? score + 1 : score;
+  if (result === 'correct') {
+    setScore(nextScore);
+    setFeedback(`Correct — ${current.name} was born on ${current.date}.`);
+    playTone(659.25, 160, 'triangle', 0.05);
+  } else {
+    setFeedback(`Not quite. ${current.name}’s birthday is ${current.date}.`);
+    playErrorTone();
+  }
+
+  timerRef.current = window.setTimeout(() => {
+    const next = index + 1;
+    setIndex(next);
+    setAnswer('');
+    setImageError(false);
+    setFeedback('');
+    if (next >= chapterCharacters.length) {
+      playVictoryChime();
+      const stars = nextScore >= 5 ? 3 : nextScore >= 3 ? 2 : 1;
+      const nextProg = recordLevelCompletion('birthday', chapter, stars, 2);
+      const points = calculateChallengeScore({
+        gameId: 'birthday',
+        level: chapter,
+        stars,
+        correctCount: nextScore,
+      });
+      recordLeaderboardScore({
+        gameId: 'birthday',
+        level: chapter,
+        score: points,
+        stars,
+        detail: `${nextScore}/${chapterCharacters.length} dates`,
+      });
+      setProgress(nextProg);
+      onProgressUpdated?.();
+    }
+  }, 900);
+}
 
   return (
     <div className="space-y-6">
