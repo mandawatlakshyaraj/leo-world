@@ -1,4 +1,4 @@
-export const SECRET_CODE = '125268';
+
 
 export interface MatchSymbol {
   key: string;
@@ -609,11 +609,8 @@ export function normalizeBirthdayDate(raw: string): string {
 export function checkBirthdaySubmission(
   input: string,
   expectedDate: string
-): 'secret' | 'empty' | 'correct' | 'wrong' {
+): 'empty' | 'correct' | 'wrong' {
   const trimmed = input.trim();
-  if (trimmed === SECRET_CODE) {
-    return 'secret';
-  }
   if (!trimmed) {
     return 'empty';
   }
