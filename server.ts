@@ -171,6 +171,15 @@ async function startServer() {
     }
   });
 
+    // Secret code check (private mode unlock)
+  app.post('/api/check-secret', (req, res) => {
+    const { code } = req.body as { code?: string };
+    if (code?.trim() === '125268') {
+      return res.json({ unlock: true });
+    }
+    res.json({ unlock: false });
+  });
+  
   app.get('/api/auth/me', (req, res) => {
     const user = store.getUserByToken(extractBearerToken(req), getOnlineUserIds());
     if (!user) {
